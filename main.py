@@ -1,7 +1,10 @@
+#!/usr/bin/python
+
 import csv
 import argparse
+import locale
+
 import pytz
-import sys
 
 from datetime import datetime, timedelta
 from pytz.exceptions import AmbiguousTimeError
@@ -138,21 +141,71 @@ def simulate(usage_data, battery_capacity, max_power):
         yield prev_simulation_data
 
 
+def _process_results(results, csv_writer, summary, price_extraction, price_injection):
+    actual_injection = 0
+    actual_extraction = 0
+    actual_total_cost = 0
+    simulated_injection = 0
+    simulated_extraction = 0
+    simulated_total_cost = 0
+
+    simulate_cost = summary and price_extraction is not None and price_injection is not None
+    locale.setlocale(locale.LC_ALL, '')
+    curr = locale.localeconv().get('currency_symbol')
+
+    if csv_writer:
+        csv_writer.writerow(['start_time', 'duration', 'extraction', 'injection', 'battery_level', 'new_extraction', 'new_injection'])
+
+    for r in results:
+        u = r.usage_data
+        if csv_writer:
+            csv_writer.writerow([u.start_time, u.duration, u.extraction, u.injection, r.battery_level, r.extraction, r.injection])
+
+        if summary:
+            actual_extraction += u.extraction
+            actual_injection += u.injection
+            simulated_extraction += r.extraction
+            simulated_injection += r.injection
+
+        if simulate_cost:
+            actual_total_cost += u.extraction * price_extraction - u.injection * price_injection
+            simulated_total_cost += r.extraction * price_extraction - r.injection * price_injection
+
+    if summary:
+        print(f"Simulated saved extraction: {actual_extraction-simulated_extraction:.2f}kWh "
+              f"(actual extraction: {actual_extraction:.2f}kWh, simulated extraction: {simulated_extraction:.2f}kWh")
+        print(f"Simulated saved injection: {actual_injection-simulated_injection:.2f}kWh "
+              f"(actual injection: {actual_injection:.2f}kWh, simulated injection: {simulated_injection:.2f}kWh")
+    if simulate_cost:
+        print(f"Simulated savings: {actual_total_cost-simulated_total_cost:.2f}{curr} "
+              f"(actual cost: {actual_total_cost:.2f}{curr}, simulated cost: {simulated_total_cost:.2f}{curr})")
+
+
 def main():
     parser = argparse.ArgumentParser(description='Simulates solar battery usage from actual usage data')
     parser.add_argument('csv_file', type=str, help='Exported usage data in csv format')
     parser.add_argument('capacity', type=float, help='Maximum battery capacity in kWh')
     parser.add_argument('max_power', type=float, help='Maximum charging/discharging power in kW')
+    parser.add_argument('-o', '--output-file', type=str, default=None, help='Path to the output file')
+    parser.add_argument('-s', '--summary', action='store_true', default=False, help='Print a summary')
+    parser.add_argument('--price-extraction', type=float, default=None, help='Price for extracting energy from the grid in €/kWh')
+    parser.add_argument('--price-injection', type=float, default=None, help='Price for injecting energy into the grid in €/kWh')
     args = parser.parse_args()
 
     records = import_usage_history(args.csv_file)
     results = simulate(records, args.capacity, args.max_power)
 
-    csv_writer = csv.writer(sys.stdout)
-    csv_writer.writerow(['start_time', 'duration', 'extraction', 'injection', 'battery_level', 'new_extraction', 'new_injection'])
-    for r in results:
-        u = r.usage_data
-        csv_writer.writerow([u.start_time, u.duration, u.extraction, u.injection, r.battery_level, r.extraction, r.injection])
+    price_extraction = args.price_extraction
+    price_injection = args.price_injection
+    output_file = args.output_file
+    summary = args.summary
+
+    if output_file:
+        with open(output_file, 'w', newline='') as csvfile:
+            csv_writer = csv.writer(csvfile)
+            _process_results(results, csv_writer, summary, price_extraction, price_injection)
+    else:
+        _process_results(results, None, summary, price_extraction, price_injection)
 
 
 if __name__ == '__main__':
