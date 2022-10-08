@@ -122,18 +122,19 @@ def _calc_charge(energy_delta, duration, battery_level, battery_capacity, max_po
     return charge
 
 
-def simulate(usage_data, battery_capacity, max_power):
+def simulate(usage_data, battery_capacity, max_power, roundtrip_efficiency=0.9):
+    efficiency = 1-(1-roundtrip_efficiency)/2
     prev_simulation_data = SimulationData(None, 0, 0, 0)
     for usage_record in usage_data:
         energy_delta = usage_record.extraction - usage_record.injection
         if energy_delta > 0:
             discharge = _calc_discharge(energy_delta, usage_record.duration, prev_simulation_data.battery_level, max_power)
             new_charge = prev_simulation_data.battery_level - discharge
-            extraction = energy_delta - discharge
+            extraction = energy_delta - discharge * efficiency
             injection = 0
         else:
             charge = _calc_charge(-energy_delta, usage_record.duration, prev_simulation_data.battery_level, battery_capacity, max_power)
-            new_charge = prev_simulation_data.battery_level + charge
+            new_charge = prev_simulation_data.battery_level + charge * efficiency
             extraction = 0
             injection = -energy_delta - charge
 
@@ -188,12 +189,14 @@ def main():
     parser.add_argument('max_power', type=float, help='Maximum charging/discharging power in kW')
     parser.add_argument('-o', '--output-file', type=str, default=None, help='Path to the output file')
     parser.add_argument('-s', '--summary', action='store_true', default=False, help='Print a summary')
+    parser.add_argument('-e', '--efficiency', type=float, default=0.9, help='Roundtrip efficiency, expects a number from 0-1. '
+                                                                            'Default 0.9, corresponding with 90% efficiency.')
     parser.add_argument('--price-extraction', type=float, default=None, help='Price for extracting energy from the grid in €/kWh')
     parser.add_argument('--price-injection', type=float, default=None, help='Price for injecting energy into the grid in €/kWh')
     args = parser.parse_args()
 
     records = import_usage_history(args.csv_file)
-    results = simulate(records, args.capacity, args.max_power)
+    results = simulate(records, args.capacity, args.max_power, args.efficiency)
 
     price_extraction = args.price_extraction
     price_injection = args.price_injection
